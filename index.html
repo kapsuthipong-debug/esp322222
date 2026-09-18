@@ -1,0 +1,176 @@
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+#include <PZEM004Tv30.h>
+
+// WiFi
+const char* ssid = "Together";
+const char* password = "12345678";
+
+// ThingSpeak
+String channelID = "3498445";
+String writeAPIKey = "5SVE48K0BV6CK7MF";
+
+// ค่าไฟ บาทต่อหน่วย
+float rate = 5.00;
+
+// LCD
+LiquidCrystal_I2C lcd(0x20, 20, 4);
+
+// PZEM
+HardwareSerial PZEMSerial(2);
+PZEM004Tv30 pzem(PZEMSerial, 16, 17);
+
+// ตัวแปร
+float voltage;
+float current;
+float power;
+float energy;
+float cost;
+
+unsigned long lastSend = 0;
+
+void setup() {
+
+  Serial.begin(115200);
+
+  // LCD
+  lcd.init();
+  lcd.backlight();
+
+  lcd.setCursor(0, 0);
+  lcd.print("ESP32 PZEM");
+  lcd.setCursor(0, 1);
+  lcd.print("Starting...");
+
+  // WiFi
+  WiFi.begin(ssid, password);
+
+  Serial.print("Connecting WiFi");
+
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+
+  Serial.println();
+  Serial.println("WiFi Connected");
+
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("WiFi Connected");
+  delay(1000);
+}
+
+void loop() {
+
+  // อ่านค่าจาก PZEM
+  voltage = pzem.voltage();
+  current = pzem.current();
+  power = pzem.power();
+  energy = pzem.energy();
+
+  // ตรวจสอบค่าผิดพลาด
+  if (isnan(voltage)) {
+    Serial.println("PZEM Error");
+
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("PZEM Error");
+
+    delay(2000);
+    return;
+  }
+
+  // คำนวณค่าไฟ
+  cost = energy * rate;
+
+  // แสดง Serial Monitor
+  Serial.println("----------------");
+  Serial.print("Voltage = ");
+  Serial.print(voltage);
+  Serial.println(" V");
+
+  Serial.print("Current = ");
+  Serial.print(current);
+  Serial.println(" A");
+
+  Serial.print("Power = ");
+  Serial.print(power);
+  Serial.println(" W");
+
+  Serial.print("Energy = ");
+  Serial.print(energy);
+  Serial.println(" kWh");
+
+  Serial.print("Cost = ");
+  Serial.print(cost);
+  Serial.println(" Baht");
+
+  // แสดง LCD หน้า 1
+  lcd.clear();
+
+  lcd.setCursor(0, 0);
+  lcd.print("V:");
+  lcd.print(voltage, 1);
+  lcd.print("V ");
+
+  lcd.print("A:");
+  lcd.print(current, 1);
+
+  lcd.setCursor(0, 1);
+  lcd.print("Power:");
+  lcd.print(power, 0);
+  lcd.print("W");
+
+  delay(3000);
+
+  // แสดง LCD หน้า 2
+  lcd.clear();
+
+  lcd.setCursor(0, 0);
+  lcd.print("Energy:");
+  lcd.print(energy, 2);
+  lcd.print("kWh");
+
+  lcd.setCursor(0, 1);
+  lcd.print("Cost:");
+  lcd.print(cost, 2);
+  lcd.print(" B");
+
+  delay(3000);
+
+  // ส่งข้อมูล ThingSpeak ทุก 15 วินาที
+  if (millis() - lastSend >= 15000) {
+
+    if (WiFi.status() == WL_CONNECTED) {
+
+      HTTPClient http;
+
+      String url = "https://api.thingspeak.com/update?api_key=";
+      url += writeAPIKey;
+      url += "&field1=";
+      url += String(voltage);
+      url += "&field2=";
+      url += String(current);
+      url += "&field3=";
+      url += String(power);
+      url += "&field4=";
+      url += String(energy);
+      url += "&field5=";
+      url += String(cost);
+
+      http.begin(url);
+
+      int httpCode = http.GET();
+
+      Serial.print("ThingSpeak = ");
+      Serial.println(httpCode);
+
+      http.end();
+    }
+
+    lastSend = millis();
+  }
+}
